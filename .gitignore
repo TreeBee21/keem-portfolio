@@ -1,0 +1,13 @@
+node_modules/
+.vercel/
+.claude/
+screenshots/
+
+# Source media (Instagram exports / originals) stays local — only captions + metadata are tracked.
+# The web-ready output in site/photos and site/reels is committed and deployed.
+photos-src/*
+!photos-src/captions.json
+!photos-src/_instagram.json
+reels-src/*
+!reels-src/captions.json
+!reels-src/_instagram.json
