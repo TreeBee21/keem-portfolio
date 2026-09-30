@@ -12,6 +12,3 @@ photos-src/*
 reels-src/*
 !reels-src/captions.json
 !reels-src/_instagram.json
-
-.vercel
-.env*
