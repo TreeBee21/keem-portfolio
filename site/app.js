@@ -46,6 +46,7 @@
       title: x.title, place: x.place, date: x.date, chips: x.chips, sim: x.sim,
       src: (w) => file(pick(x.sizes, w)),
       srcset: x.sizes.map((s) => `${file(s)} ${s}w`).join(', '),
+      wall: (kind) => `${PM.base}${x.id}-wall-${kind}.jpg`,
     };
   });
 
@@ -87,6 +88,7 @@
     img.alt = '';
     img.decoding = 'async';
     img.addEventListener('load', () => img.classList.add('is-loaded'), { once: true });
+    img.addEventListener('transitionend', (e) => { if (e.propertyName === 'filter') img.classList.add('is-developed'); });
 
     const cap = document.createElement('span');
     cap.className = 'tile-cap';
@@ -595,6 +597,46 @@
   ctl.play.addEventListener('click', togglePlay);
   ctl.sound.addEventListener('click', toggleSound);
 
+  /* ── Viewer: save as wallpaper ─────────────────────────── */
+  // Pre-cropped at build time on the photo's point of interest: a tall crop for phones, 16:9 for
+  // desktops. Phones get the native share sheet ("Save Image" → Photos); desktops a download.
+  // Sharing needs a fresh tap, so if fetching took too long the button asks for one more tap.
+  const wallWrap = $('[data-lb-actions]', lb);
+  const wallBtn = $('[data-act="wallpaper"]', lb);
+  const handheld = matchMedia('(max-width: 760px), (pointer: coarse)');
+  let wallBlob = null;
+
+  wallBtn.addEventListener('click', async () => {
+    const p = cur[idx];
+    if (!p?.wall) return;
+    const kind = handheld.matches ? 'phone' : 'desktop';
+    const name = `keem-${p.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}-wallpaper.jpg`;
+    try {
+      if (!wallBlob || wallBlob.kind !== kind) {
+        wallBtn.textContent = 'Preparing…';
+        const blob = await fetch(p.wall(kind)).then((r) => { if (!r.ok) throw new Error(r.status); return r.blob(); });
+        if (cur[idx] !== p) return; // moved on while it loaded
+        wallBlob = { kind, blob };
+      }
+      const file = new File([wallBlob.blob], name, { type: 'image/jpeg' });
+      if (kind === 'phone' && navigator.canShare?.({ files: [file] })) {
+        await navigator.share({ files: [file], title: p.title });
+      } else {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(wallBlob.blob);
+        a.download = name;
+        document.body.append(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      }
+      wallBtn.textContent = '✓ Saved';
+    } catch (err) {
+      if (err?.name === 'AbortError') { wallBtn.textContent = '↓ Wallpaper'; return; } // share sheet dismissed
+      wallBtn.textContent = err?.name === 'NotAllowedError' && wallBlob ? 'Tap to save' : 'Try again';
+    }
+  });
+
   /* ── Viewer: ripple, scrim, caption, strip ─────────────── */
   function scrimTo(v, duration, delay = 0) {
     const from = getComputedStyle(scrim).opacity;
@@ -667,6 +709,9 @@
     el.exif.scrollLeft = 0;
 
     ctl.wrap.hidden = !reel;
+    wallWrap.hidden = reel;
+    wallBtn.textContent = '↓ Wallpaper';
+    wallBlob = null;
     if (reel) {
       ctl.time.textContent = `0:00 / ${fmtDur(p.dur)}`;
       ctl.ig.hidden = !p.code;

@@ -3,6 +3,7 @@
 //   npm run photos
 //
 // - Resizes every image to WebP at several widths  -> site/photos/<slug>-<w>.webp
+// - Crops phone + desktop wallpapers on the point of interest -> site/photos/<slug>-wall-<kind>.jpg
 // - Reads size, average colour and camera EXIF (incl. Fujifilm film simulation)
 // - Keeps photos-src/captions.json in sync: new files get a stub you can edit
 //   (title, place, date, series, order, hidden). Re-run after editing.
@@ -21,6 +22,7 @@ const MANIFEST = path.join(ROOT, 'site', 'photos.js');
 const CAPTIONS = path.join(SRC, 'captions.json');
 
 const WIDTHS = [400, 800, 1200, 1600, 2400];
+const WALLPAPERS = [['phone', 9 / 19.5], ['desktop', 16 / 9]];
 const SERIES = ['streets', 'machines', 'places', 'people', 'land'];
 const EXT = /\.(jpe?g|png|webp|tiff?|avif)$/i;
 
@@ -131,6 +133,20 @@ async function main() {
       const outStat = await fs.stat(out).catch(() => null);
       if (outStat && outStat.mtimeMs >= srcStat.mtimeMs) continue; // already up to date
       await base.clone().resize({ width: s, withoutEnlargement: true }).webp({ quality: 80 }).toFile(out);
+    }
+
+    // Wallpapers: the largest phone (19.5:9) and desktop (16:9) crop the photo allows, placed on its
+    // point of interest. Override placement with "wallpaper": "left" | "right" | "top" | … in captions.json.
+    for (const [kind, ar] of WALLPAPERS) {
+      const out = path.join(OUT, `${id}-wall-${kind}.jpg`);
+      const outStat = await fs.stat(out).catch(() => null);
+      if (outStat && outStat.mtimeMs >= srcStat.mtimeMs) continue;
+      let cw = w, ch = Math.round(w / ar);
+      if (ch > h) { ch = h; cw = Math.round(h * ar); }
+      await base.clone()
+        .resize(cw, ch, { fit: 'cover', position: cap.wallpaper || 'attention' })
+        .jpeg({ quality: 88, mozjpeg: true })
+        .toFile(out);
     }
 
     const exif = await readExif(abs);
