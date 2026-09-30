@@ -402,7 +402,8 @@ a.contact-row:hover .contact-arrow { color: var(--accent); translate: 3px -3px; 
 
 /* Chrome fades in after the photo lands, and out instantly on close */
 .lb-chrome { opacity: 0; translate: 0 6px; transition: opacity 0.16s var(--ease-fade), translate 0.16s var(--ease-fade); }
-.lb.show-chrome .lb-chrome {
+.lb.show-chrome .lb-chrome,
+.feed.show-chrome .lb-chrome {
   opacity: 1;
   translate: 0 0;
   transition: opacity 0.36s var(--ease-fade) 0.3s, translate 0.5s var(--ease-out) 0.3s;
@@ -420,12 +421,13 @@ a.contact-row:hover .contact-arrow { color: var(--accent); translate: 3px -3px; 
   justify-content: space-between;
   gap: 16px;
   min-height: 64px;
-  padding: 12px var(--gutter);
+  padding: max(12px, env(safe-area-inset-top)) var(--gutter) 12px;
+  touch-action: none;
 }
-.lb-frame-no { color: var(--text); }
+.lb-frame-no { color: var(--text); transition: opacity 0.2s var(--ease-fade); }
 .lb-frame-no .label { color: inherit; }
 .lb-series { color: var(--muted); }
-.lb-pos { position: absolute; left: 50%; translate: -50% 0; color: var(--text-2); }
+.lb-pos { position: absolute; left: 50%; translate: -50% 0; color: var(--text-2); transition: opacity 0.2s var(--ease-fade); }
 .lb-close {
   display: inline-flex;
   align-items: center;
@@ -484,6 +486,7 @@ a.contact-row:hover .contact-arrow { color: var(--accent); translate: 3px -3px; 
   overflow: hidden;
   border-radius: var(--radius);
   background: var(--c);
+  transform-origin: 0 0; /* zoom: translate(x, y) scale(s) from the top-left corner */
 }
 .lb-frame img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; -webkit-user-drag: none; }
 /* Ambient light: a tiny canvas with the photo's blurred colours and a radial fade baked in
@@ -618,10 +621,12 @@ a.contact-row:hover .contact-arrow { color: var(--accent); translate: 3px -3px; 
   text-transform: uppercase;
   text-shadow: 0 1px 8px rgba(0, 0, 0, 0.6);
 }
-.lb-frame.is-paused .lb-paused { opacity: 1; scale: 1; }
+.lb-frame.is-paused .lb-paused,
+.feed.is-paused .feed-slide.is-active .lb-paused { opacity: 1; scale: 1; }
 .lb-frame.is-leaving { pointer-events: none; }
 
 .lb-info {
+  touch-action: pan-x;
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
@@ -715,6 +720,129 @@ a.contact-row:hover .contact-arrow { color: var(--accent); translate: 3px -3px; 
   background: var(--accent);
 }
 
+/* Zoomed in: the photo can fill the screen, so everything but Close steps aside */
+.lb.is-zoomed .lb-info,
+.lb.is-zoomed .lb-strip,
+.lb.is-zoomed .lb-nav {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s var(--ease-fade), translate 0.2s var(--ease-fade);
+}
+.lb.is-zoomed .lb-frame-no, .lb.is-zoomed .lb-pos { opacity: 0; }
+.lb.is-zoomed .lb-top { pointer-events: none; }
+.lb.is-zoomed .lb-close {
+  pointer-events: auto;
+  background: rgba(13, 12, 11, 0.62);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+@media (hover: hover) and (pointer: fine) {
+  .lb-frame.is-photo { cursor: zoom-in; }
+  .lb.is-zoomed .lb-frame.is-photo { cursor: grab; }
+  .lb.is-panning .lb-frame.is-photo { cursor: grabbing; }
+}
+
+/* ── Reel feed (phones) ─────────────────────────────────── */
+/* Full-screen, one reel per screen, snapping. Each slide sizes its reel to fit (container units),
+   with the same canvas glow as the viewer; one shared <video> moves into the active slide. */
+.feed {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+  visibility: hidden;
+  pointer-events: none;
+}
+.feed.is-open { visibility: visible; pointer-events: auto; }
+.feed-scrim { position: absolute; inset: 0; background: var(--bg); }
+.feed-track {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-snap-type: y mandatory;
+  scrollbar-width: none;
+}
+.feed-track::-webkit-scrollbar { display: none; }
+.feed-slide {
+  position: relative;
+  display: grid;
+  place-items: center;
+  height: 100%;
+  overflow: hidden;
+  container-type: size;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+  -webkit-tap-highlight-color: transparent;
+}
+.feed-media {
+  position: relative;
+  width: min(100vw, calc(100vh * var(--r)));
+  width: min(100cqw, calc(100cqh * var(--r)));
+  aspect-ratio: var(--r);
+  transform-origin: 0 0;
+}
+.feed-media .lb-photo { border-radius: 0; }
+.feed-media img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; -webkit-user-drag: none; }
+.feed-top {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: max(10px, env(safe-area-inset-top)) 16px 18px;
+  background: linear-gradient(rgba(13, 12, 11, 0.55), rgba(13, 12, 11, 0));
+  pointer-events: none;
+}
+.feed-top > * { pointer-events: auto; }
+.feed-pos { display: grid; gap: 7px; margin: 0; color: var(--text); white-space: nowrap; }
+.feed-hint { padding-left: 15px; color: var(--text-2); transition: opacity 0.3s var(--ease-fade); }
+.feed.has-swiped .feed-hint { opacity: 0; }
+.feed-btns { display: flex; align-items: center; gap: 8px; }
+.feed-btns .chip { height: 40px; background: rgba(13, 12, 11, 0.4); }
+.feed-close {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: rgba(13, 12, 11, 0.4);
+  color: var(--text);
+}
+.feed-close:active { scale: 0.94; }
+.feed-cap {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  padding: 56px 16px calc(34px + env(safe-area-inset-bottom));
+  background: linear-gradient(to top, rgba(13, 12, 11, 0.85), rgba(13, 12, 11, 0.5) 55%, rgba(13, 12, 11, 0));
+  pointer-events: none;
+}
+.feed-cap a { pointer-events: auto; }
+.feed-no { margin: 0; color: var(--text-2); }
+.feed-title {
+  margin: 8px 0 0;
+  font: 400 30px/1.05 var(--serif);
+  letter-spacing: -0.005em;
+  text-wrap: balance;
+}
+.feed-meta { margin: 8px 0 0; color: var(--text-2); }
+.feed-ig { margin-top: 14px; background: rgba(13, 12, 11, 0.4); }
+.feed-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: env(safe-area-inset-bottom);
+  z-index: 3;
+  height: 32px;
+}
+
 /* ── Responsive ─────────────────────────────────────────── */
 @media (max-width: 860px) {
   .intro { grid-template-columns: 1fr; }
@@ -732,27 +860,36 @@ a.contact-row:hover .contact-arrow { color: var(--accent); translate: 3px -3px; 
   .lede { font-size: 14px; }
   .facts { display: none; }
   .filters { padding-block: 6px; }
-  .lb-top { min-height: 56px; padding: 8px 16px; }
+  .lb-top { min-height: 56px; padding: max(8px, env(safe-area-inset-top)) 16px 8px; }
   .lb-series { display: none; }
   .lb-close kbd { display: none; }
   .lb-stage { margin: 0; }
-  .lb-info { flex-direction: column; align-items: stretch; padding: 14px 16px 4px; }
-  .lb-exif { max-width: none; }
+  /* Caption on top; camera chips (scrolling) and the wallpaper button share the row under it */
+  .lb-info {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px 8px;
+    padding: 14px 16px 4px;
+  }
+  .lb-caption, .lb-controls, .lb-exif[hidden] + .lb-actions { grid-column: 1 / -1; }
+  .lb-info > :not(.lb-caption) { transition: opacity 0.25s var(--ease-fade); }
+  .lb-exif {
+    max-width: none;
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+  }
   .lb-strip { --th: 38px; padding-inline: 16px; }
   .lb-strip.is-expanded {
     --th: 84px;
     margin-top: -46px; /* = 84 − 38: grow upward without resizing the row */
     background-color: rgba(13, 12, 11, 0.94);
-    box-shadow: 0 -20px 20px -4px rgba(13, 12, 11, 0.94);
+    box-shadow: 0 -10px 12px -6px rgba(13, 12, 11, 0.94);
   }
   .lb-strip.is-expanded .thumb { opacity: 0.72; } /* easier to browse while choosing */
   .lb-strip.is-expanded .thumb.is-active { opacity: 1; }
-  /* The enlarged strip covers the caption, so step it aside instead of half-hiding it */
-  .lb.show-chrome:has(.lb-strip.is-expanded) .lb-info {
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.2s var(--ease-fade), translate 0.2s var(--ease-fade);
-  }
+  /* The enlarged strip grows over the chips row only; the title and place stay readable */
+  .lb.strip-open .lb-info > :not(.lb-caption) { opacity: 0; pointer-events: none; }
 }
 @media (max-width: 760px), (hover: none) {
   .lb-nav { display: none; }

@@ -10,13 +10,13 @@ A static site — no framework, no build step. The page is plain HTML, CSS and J
 site/                 ← deployed as-is
   index.html          markup
   styles.css          "darkroom" design system + all component styles
-  app.js              contact sheet, filters, Motion section, viewer, navigation
+  app.js              contact sheet, filters, Motion section, viewer (zoom), phone reel feed, navigation
   photos.js           generated manifest → window.KEEM_PHOTOS
   reels.js            generated manifest → window.KEEM_REELS
   photos/  reels/     generated WebP / MP4 files
 tools/
   prepare-photos.mjs  photos-src/ → site/photos + site/photos.js (sizes, colour, EXIF, Fuji film sim)
-  prepare-reels.mjs   reels-src/  → site/reels  + site/reels.js  (faststart MP4, hover preview, posters)
+  prepare-reels.mjs   reels-src/  → site/reels  + site/reels.js  (720p H.264 MP4, hover preview, posters)
   serve.mjs           local preview server (with HTTP Range, needed for video seeking)
 photos-src/  reels-src/   source media (not committed) + captions.json you edit
 ```
@@ -38,7 +38,7 @@ Camera chips (including the Fujifilm film simulation) appear automatically for o
 
 ### Deep links
 
-- `?p=014` opens photo 14, `?m=03` opens reel 3
+- `?p=014` opens photo 14, `?m=03` opens reel 3 (in the swipe feed on phones). Back closes either.
 - `#work`, `#motion`, `#about`, `#contact` scroll to a section
 
 ## Deploying

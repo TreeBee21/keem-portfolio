@@ -69,7 +69,7 @@
   <section class="motion" id="motion" aria-labelledby="motion-h">
     <header class="section-head">
       <h2 class="section-title" id="motion-h">Motion</h2>
-      <p class="label section-meta"><b data-reel-count>00</b> reels · hover to preview, open for sound</p>
+      <p class="label section-meta"><b data-reel-count>00</b> reels · <span data-reel-hint>hover to preview, open for sound</span></p>
     </header>
     <div class="reels"></div>
   </section>
@@ -161,6 +161,22 @@
   <div class="lb-strip lb-chrome">
     <div class="lb-track" role="group" aria-label="All frames"></div>
   </div>
+</div>
+
+<!-- Reel feed (phones): full-screen reels, swipe up / down between them -->
+<div class="feed" role="dialog" aria-modal="true" aria-label="Reels" aria-hidden="true">
+  <div class="feed-scrim"></div>
+  <div class="feed-track"></div>
+  <div class="feed-top lb-chrome">
+    <p class="feed-pos label" aria-live="polite"><span><span class="dot"></span><span data-feed-pos></span></span><span class="feed-hint">Swipe for more</span></p>
+    <div class="feed-btns">
+      <button class="chip chip-btn is-on" type="button" data-feed-sound aria-pressed="true">Sound on</button>
+      <button class="feed-close" type="button" aria-label="Close reels">
+        <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+  </div>
+  <div class="feed-bar lb-chrome"></div>
 </div>
 </body>
 </html>

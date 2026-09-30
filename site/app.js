@@ -4,8 +4,9 @@
  * reels.js → window.KEEM_REELS) and builds:
  *   1. the photo contact sheet (justified rows + series filters)
  *   2. the Motion section (reels, silent previews on hover)
- *   3. the viewer: ripple-zoom open/close, ambient glow, video controls, gestures
- *   4. page navigation (eased section scrolling, back to top, deep links)
+ *   3. the viewer: ripple-zoom open/close, ambient glow, video controls, zoom, gestures
+ *   4. the reel feed on phones: full-screen reels, swipe up / down between them
+ *   5. page navigation (eased section scrolling, back to top, deep links, back button)
  *
  * Motion spec for the viewer
  *   Open:  the clicked frame flies to centre (520 ms, ease-out-quint). Every other tile pushes
@@ -21,6 +22,7 @@
   const EASE_FADE = 'cubic-bezier(0.25, 0.46, 0.45, 0.94)';
   const reduce = matchMedia('(prefers-reduced-motion: reduce)');
   const canHover = matchMedia('(hover: hover) and (pointer: fine)');
+  const phone = matchMedia('(max-width: 760px)');
 
   const CATS = { all: 'All', streets: 'Streets', machines: 'Machines', places: 'Food & Places', people: 'People', land: 'Land' };
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -44,6 +46,7 @@
     return {
       kind: 'photo', no: i + 1, id: x.id, r: x.w / x.h, c: x.c, cat: x.cat,
       title: x.title, place: x.place, date: x.date, chips: x.chips, sim: x.sim,
+      sizes: x.sizes,
       src: (w) => file(pick(x.sizes, w)),
       srcset: x.sizes.map((s) => `${file(s)} ${s}w`).join(', '),
       wall: (kind) => `${PM.base}${x.id}-wall-${kind}.jpg`,
@@ -73,6 +76,7 @@
 
   let filter = 'all';
   let list = PHOTOS.slice(); // photos in the current filter, in grid order
+  let isOpen = false, feedOpen = false; // viewer / reel feed showing
 
   /* ── Tiles ─────────────────────────────────────────────── */
   function makeTile(p, host) {
@@ -113,20 +117,23 @@
   });
   REELS.forEach((p) => {
     makeTile(p, reelsEl);
-    p.el.addEventListener('click', () => open(REELS.indexOf(p), { set: 'reels' }));
+    p.el.addEventListener('click', () => (phone.matches ? openFeed(REELS.indexOf(p)) : open(REELS.indexOf(p), { set: 'reels' })));
     p.el.addEventListener('pointerenter', () => startPreview(p));
     p.el.addEventListener('pointerleave', () => stopPreview(p));
   });
   countEl.textContent = pad(list.length);
   $('[data-reel-count]').textContent = pad(REELS.length, 2);
+  if (!canHover.matches) $('[data-reel-hint]').textContent = 'tap to watch with sound';
   if (!REELS.length) {
     $('.motion').hidden = true;
     $('[data-motion-link]').hidden = true;
   }
 
-  // Silent 8-second preview on hover (desktop only), fetched the first time a tile is hovered
-  function startPreview(p) {
-    if (!canHover.matches || reduce.matches || isOpen) return;
+  // Silent 8-second preview on hover (desktop), or for the reel in the middle of the screen
+  // (phones, `auto`). Fetched the first time it's needed.
+  function startPreview(p, auto = false) {
+    if ((!auto && !canHover.matches) || reduce.matches || isOpen || feedOpen || p.want) return;
+    p.want = true;
     let v = p.el._pv;
     if (!v) {
       v = document.createElement('video');
@@ -138,7 +145,7 @@
       v.preload = 'auto';
       v.setAttribute('aria-hidden', 'true');
       v.src = p.preview;
-      v.addEventListener('playing', () => { if (p.el.matches(':hover')) p.el.classList.add('is-previewing'); });
+      v.addEventListener('playing', () => { if (p.want) p.el.classList.add('is-previewing'); });
       p.img.after(v);
       p.el._pv = v;
     }
@@ -146,9 +153,31 @@
     v.play().catch(() => {});
   }
   function stopPreview(p) {
+    p.want = false;
     if (!p.el._pv) return;
     p.el.classList.remove('is-previewing');
     p.el._pv.pause();
+  }
+
+  // Phones have no hover, so the reel nearest the middle of the screen previews itself while scrolling
+  if (!canHover.matches && !navigator.connection?.saveData) {
+    let raf = 0, near = false;
+    const pickPreview = () => {
+      raf = 0;
+      let best = null, bestD = Infinity;
+      if (near && !isOpen && !feedOpen) {
+        REELS.forEach((p) => {
+          const r = p.el.getBoundingClientRect();
+          const seen = (Math.min(r.bottom, innerHeight) - Math.max(r.top, 0)) / r.height;
+          const d = Math.abs(r.top + r.height / 2 - innerHeight / 2);
+          if (seen > 0.7 && d < bestD) { best = p; bestD = d; }
+        });
+      }
+      REELS.forEach((p) => (p === best ? startPreview(p, true) : stopPreview(p)));
+    };
+    const queue = () => { if (!raf) raf = requestAnimationFrame(pickPreview); };
+    new IntersectionObserver(([e]) => { near = e.isIntersecting; queue(); }).observe(reelsEl);
+    addEventListener('scroll', queue, { passive: true });
   }
 
   /* ── Justified rows ────────────────────────────────────── */
@@ -329,7 +358,7 @@
   };
 
   // `cur` is whichever set the viewer is showing: the (filtered) photo list or the reels
-  let cur = list, idx = -1, frame = null, isOpen = false, closing = false;
+  let cur = list, idx = -1, frame = null, closing = false;
   let soundOn = true; // remembered while browsing reels
 
   /* ── Viewer: frame geometry ────────────────────────────── */
@@ -352,7 +381,7 @@
   /* ── Viewer: frames ────────────────────────────────────── */
   function makeFrame(p) {
     const f = document.createElement('div');
-    f.className = 'lb-frame';
+    f.className = p.kind === 'reel' ? 'lb-frame' : 'lb-frame is-photo';
     f.style.setProperty('--c', p.c);
     f.style.setProperty('--glow-o', glowStrength(p.c));
 
@@ -399,6 +428,8 @@
       photo.append(v, paused, bar);
       f._video = v;
       f._bar = bar;
+      f._sync = () => { if (f === frame) syncControls(); };
+      f._onTime = () => { if (f === frame) ctl.time.textContent = `${fmtDur(v.currentTime)} / ${fmtDur(v.duration)}`; };
     } else {
       hi = document.createElement('img');
       hi.className = 'lb-hi';
@@ -410,7 +441,11 @@
 
     f.append(glow, photo);
     f._glow = glow;
+    f._photo = photo;
+    f._hi = hi;
+    f._p = p;
     f._r = p.r;
+    f._z = Z1;
     lb.append(f);
     const r = place(f, p);
     if (hi) hi.src = p.src(hiWidth(r));
@@ -421,36 +456,54 @@
   // Stop a frame's playback and timers when it leaves the viewer
   function retire(f) {
     if (!f) return;
-    f._retired = true; // don't flash the "Paused" mark on the way out
+    f._quiet = true; // don't flash the "Paused" mark on the way out
     f._video?.pause();
     clearInterval(f._glowTimer);
+    f._glowTimer = null;
+    if (f._fling) cancelAnimationFrame(f._fling);
   }
 
   /* ── Viewer: ambient glow ──────────────────────────────── */
-  // Paint at ~120 px: the photo in the middle 66% (the glow box is 190% of the photo), blurred and
-  // saturated into an accumulation canvas, then faded out with an elliptical gradient so it melts
-  // into black. `alpha` < 1 blends a new sample over the previous ones (used for live video).
+  // Painted at ~96 px: the photo in the middle 66% of a darkroom-coloured box (the glow box is 190%
+  // of the photo), blurred and saturated, then faded out with an elliptical gradient so it melts
+  // into the black. The blur is done by hand (three box-blur passes, close to a gaussian) because
+  // Safari ignores the canvas `filter` property, which left iPhones with a sharp, pixelated copy.
+  // `alpha` < 1 blends a new sample over the previous ones (used for live video).
+  const sampler = document.createElement('canvas');
+  const sctx = sampler.getContext('2d', { willReadFrequently: true });
+
   function paintGlow(canvas, src, r, alpha = 1) {
-    const W = 120, H = Math.max(24, Math.round(W / r));
-    let acc = canvas._acc;
-    if (!acc) {
-      canvas.width = W;
-      canvas.height = H;
-      acc = canvas._acc = document.createElement('canvas');
-      acc.width = W;
-      acc.height = H;
-    }
-    const a = acc.getContext('2d');
+    const W = 96, H = Math.max(20, Math.round(W / r)), N = W * H;
+    if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; canvas._px = null; }
+    sampler.width = W;
+    sampler.height = H;
+    sctx.fillStyle = '#0d0c0b';
+    sctx.fillRect(0, 0, W, H);
     const k = 0.17;
-    a.globalAlpha = alpha;
-    a.filter = `blur(${Math.round(W * 0.07)}px) saturate(1.9)`;
-    a.drawImage(src, W * k, H * k, W * (1 - 2 * k), H * (1 - 2 * k));
-    a.filter = 'none';
-    a.globalAlpha = 1;
+    let img;
+    try {
+      sctx.drawImage(src, W * k, H * k, W * (1 - 2 * k), H * (1 - 2 * k));
+      img = sctx.getImageData(0, 0, W, H);
+    } catch { return; } // source not decodable yet
+
+    const d = img.data;
+    let px = new Float32Array(N * 3);
+    for (let i = 0; i < N; i++) { px[i * 3] = d[i * 4]; px[i * 3 + 1] = d[i * 4 + 1]; px[i * 3 + 2] = d[i * 4 + 2]; }
+    const tmp = new Float32Array(N * 3);
+    for (let pass = 0; pass < 3; pass++) boxBlur(px, tmp, W, H, 6);
+    for (let i = 0; i < N * 3; i += 3) { // saturate ×1.9
+      const l = 0.213 * px[i] + 0.715 * px[i + 1] + 0.072 * px[i + 2];
+      px[i] = l + (px[i] - l) * 1.9;
+      px[i + 1] = l + (px[i + 1] - l) * 1.9;
+      px[i + 2] = l + (px[i + 2] - l) * 1.9;
+    }
+    const prev = canvas._px;
+    if (alpha < 1 && prev) for (let i = 0; i < N * 3; i++) px[i] = prev[i] + (px[i] - prev[i]) * alpha;
+    canvas._px = px;
+    for (let i = 0; i < N; i++) { d[i * 4] = px[i * 3]; d[i * 4 + 1] = px[i * 3 + 1]; d[i * 4 + 2] = px[i * 3 + 2]; d[i * 4 + 3] = 255; }
 
     const ctx = canvas.getContext('2d');
-    ctx.globalCompositeOperation = 'copy';
-    ctx.drawImage(acc, 0, 0);
+    ctx.putImageData(img, 0, 0);
     ctx.globalCompositeOperation = 'destination-in';
     ctx.save();
     ctx.translate(W / 2, H / 2);
@@ -464,6 +517,32 @@
     ctx.fillRect(-W / 2, -W / 2, W, W);
     ctx.restore();
     ctx.globalCompositeOperation = 'source-over';
+  }
+
+  // One box-blur pass over interleaved RGB floats: rows into `t`, then columns back into `a`
+  function boxBlur(a, t, W, H, R) {
+    const n = 2 * R + 1;
+    for (let y = 0; y < H; y++) {
+      const row = y * W;
+      for (let c = 0; c < 3; c++) {
+        let sum = 0;
+        for (let i = -R; i <= R; i++) sum += a[(row + Math.min(W - 1, Math.max(0, i))) * 3 + c];
+        for (let x = 0; x < W; x++) {
+          t[(row + x) * 3 + c] = sum / n;
+          sum += a[(row + Math.min(W - 1, x + R + 1)) * 3 + c] - a[(row + Math.max(0, x - R)) * 3 + c];
+        }
+      }
+    }
+    for (let x = 0; x < W; x++) {
+      for (let c = 0; c < 3; c++) {
+        let sum = 0;
+        for (let i = -R; i <= R; i++) sum += t[(Math.min(H - 1, Math.max(0, i)) * W + x) * 3 + c];
+        for (let y = 0; y < H; y++) {
+          a[(y * W + x) * 3 + c] = sum / n;
+          sum += t[(Math.min(H - 1, y + R + 1) * W + x) * 3 + c] - t[(Math.max(0, y - R) * W + x) * 3 + c];
+        }
+      }
+    }
   }
 
   // Dark photos get a stronger glow so they still lift off the background; bright ones stay subtle
@@ -485,6 +564,8 @@
   }
 
   /* ── Viewer: video ─────────────────────────────────────── */
+  // Works for any "frame" element that carries _video, _bar, _glow and _r: viewer frames, and the
+  // reel feed (whose one video moves from slide to slide). _sync / _onTime are optional hooks.
   function wireVideo(f) {
     const v = f._video, bar = f._bar, tip = $('.lb-tip', bar);
 
@@ -494,14 +575,14 @@
       bar.style.setProperty('--p', v.currentTime / v.duration);
       bar.setAttribute('aria-valuenow', String(Math.round(v.currentTime)));
       bar.setAttribute('aria-valuetext', `${fmtDur(v.currentTime)} of ${fmtDur(v.duration)}`);
-      if (f === frame) ctl.time.textContent = `${fmtDur(v.currentTime)} / ${fmtDur(v.duration)}`;
+      f._onTime?.();
     };
     const loop = () => {
       showTime();
       f._raf = !v.paused && f.isConnected ? requestAnimationFrame(loop) : null;
     };
     ['timeupdate', 'seeked', 'loadedmetadata'].forEach((ev) => v.addEventListener(ev, showTime));
-    ['play', 'pause', 'volumechange'].forEach((ev) => v.addEventListener(ev, () => { if (f === frame) syncControls(); }));
+    ['play', 'pause', 'volumechange'].forEach((ev) => v.addEventListener(ev, () => f._sync?.()));
 
     v.addEventListener('play', () => {
       f.classList.remove('is-paused');
@@ -509,10 +590,10 @@
       // Live ambient light: re-sample the playing frame a few times a second, blended over the
       // previous samples so the glow drifts with the footage instead of flickering
       f._glowTimer ??= setInterval(() => {
-        if (!v.paused && v.readyState >= 2) paintGlow(f._glow, v, f._r, 0.35);
+        if (!v.paused && v.readyState >= 2 && f._glow) paintGlow(f._glow, v, f._r, 0.35);
       }, 200);
     });
-    v.addEventListener('pause', () => { if (!f._retired) f.classList.add('is-paused'); });
+    v.addEventListener('pause', () => { if (!f._quiet) f.classList.add('is-paused'); });
 
     // Scrubbing: click to jump, drag to scrub, hover to read the time under the cursor
     const hover = (e) => {
@@ -566,11 +647,12 @@
     const v = f?._video;
     if (!v) return;
     v.muted = !soundOn;
-    v.play().catch(() => {
+    v.play().catch((err) => {
+      if (err?.name === 'AbortError' || f._quiet) return; // interrupted by a pause / new source, not refused
       // Autoplay with sound refused (e.g. opened from a link, no click yet): fall back to muted
       v.muted = true;
       soundOn = false;
-      syncControls();
+      f._sync?.();
       v.play().catch(() => f.classList.add('is-paused')); // can't autoplay at all: show it's waiting for a tap
     });
   }
@@ -718,7 +800,8 @@
       if (p.code) ctl.ig.href = `https://www.instagram.com/reel/${p.code}/`;
     }
     if (animate && !reduce.matches) {
-      [info.firstElementChild, reel ? ctl.wrap : el.exif].forEach((n, i) => n.animate(
+      const rows = lb.classList.contains('strip-open') ? [info.firstElementChild] : [info.firstElementChild, reel ? ctl.wrap : el.exif];
+      rows.forEach((n, i) => n.animate(
         [{ opacity: 0, translate: '0 6px' }, { opacity: 1, translate: '0 0' }],
         { duration: 360, delay: i * 40, easing: EASE_OUT, fill: 'backwards' }
       ));
@@ -785,6 +868,7 @@
     if (open === stripEl.classList.contains('is-expanded')) return;
     const k = (stripEl.scrollLeft + anchorX) / stripEl.scrollWidth; // point that stays put
     stripEl.classList.toggle('is-expanded', open);
+    lb.classList.toggle('strip-open', open); // the chips row steps aside; the title stays
     if (reduce.matches) return;
     holdStrip(() => k * stripEl.scrollWidth - anchorX);
   }
@@ -796,6 +880,7 @@
     clearTimeout(stripTimer);
     releaseStrip();
     stripEl.classList.remove('is-expanded');
+    lb.classList.remove('strip-open');
   }
 
   stripEl.addEventListener('pointerdown', (e) => {
@@ -818,10 +903,28 @@
     });
   }
 
-  const setURL = (p) => {
-    const q = p ? (p.kind === 'reel' ? `?m=${pad(p.no, 2)}` : `?p=${pad(p.no)}`) : location.pathname;
-    try { history.replaceState(null, '', q); } catch {} // file:// can refuse
-  };
+  /* ── History: ?p= / ?m= links, and the back button closes the viewer or feed ── */
+  // Opening pushes a history entry, so the phone's back gesture closes instead of leaving the site.
+  // Moving between frames replaces it. Closing from the UI steps back over it (and ignores that pop).
+  const query = (p) => (p.kind === 'reel' ? `?m=${pad(p.no, 2)}` : `?p=${pad(p.no)}`);
+  let pushed = false, skipPops = 0;
+  function showURL(p, push) {
+    try { // file:// can refuse
+      if (push) { history.pushState({ keem: 1 }, '', query(p)); pushed = true; }
+      else history.replaceState(history.state, '', query(p));
+    } catch {}
+  }
+  function leaveURL() {
+    if (pushed) { pushed = false; skipPops++; history.back(); return; }
+    try { history.replaceState(null, '', location.pathname); } catch {}
+  }
+  addEventListener('popstate', () => {
+    if (skipPops) { skipPops--; return; }
+    if (!pushed) return;
+    pushed = false;
+    if (feedOpen) closeFeed(true);
+    else if (isOpen) close(true);
+  });
 
   /* ── Viewer: open / navigate / close ───────────────────── */
   function open(i, { instant = false, set = 'photos' } = {}) {
@@ -862,7 +965,7 @@
     playFrame(frame); // still inside the click, so sound is allowed
     syncControls();
     preload(i);
-    setURL(p);
+    showURL(p, true);
   }
 
   function go(i, dir) {
@@ -870,6 +973,9 @@
     const n = cur.length;
     i = (i + n) % n;
     if (i === idx) return;
+    if (zoomed()) setZoom(frame, Z1);
+    clearTimeout(tapTimer);
+    lastTap = null;
     dir = dir || (i > idx ? 1 : -1);
     const still = reduce.matches;
     const prev = cur[idx], p = cur[i];
@@ -903,16 +1009,18 @@
     playFrame(frame);
     syncControls();
     preload(i);
-    setURL(p);
+    showURL(p, false);
   }
 
-  function close() {
+  function close(fromHistory = false) {
     if (!isOpen || closing || !frame) return;
     closing = true;
     const p = cur[idx];
     const t = p.el;
     const still = reduce.matches;
     retire(frame);
+    clearTimeout(tapTimer);
+    if (!fromHistory) leaveURL();
 
     // Land on the current frame's tile — scroll it into view first (invisible under the scrim)
     t._rip?.forEach((a) => a.cancel());
@@ -933,6 +1041,11 @@
     const from = getComputedStyle(f).transform;
     f._anim?.cancel();
     f.style.transform = '';
+    if (f._z.s !== 1 || f._z.x || f._z.y) { // zoomed in: settle back while flying home
+      haltZoom(f);
+      zoomTo(f, Z1, still ? 0 : 480);
+    }
+    lb.classList.remove('is-zoomed');
     glowOut(f, 240); // the glow belongs to the darkroom, not the grid
     ripple(p, 'in', still);
     scrimTo(0, still ? 200 : 420, still ? 0 : 60);
@@ -944,68 +1057,256 @@
       t.style.visibility = '';
       f.remove();
       frame = null;
-      lb.classList.remove('is-open', 'is-clean', 'is-dragging');
+      lb.classList.remove('is-open', 'is-clean', 'is-dragging', 'is-panning');
       lb.setAttribute('aria-hidden', 'true');
       root.classList.remove('is-locked');
       page.inert = false;
       isOpen = false;
       closing = false;
       t.focus({ preventScroll: true });
-      setURL(null);
     };
   }
 
+  /* ── Viewer: zoom (photos) ─────────────────────────────── */
+  // Click, double-tap or pinch to zoom; drag to pan (with a little momentum); ctrl + wheel or a
+  // trackpad pinch on desktop; + / − / 0 keys. The photo layer (.lb-photo) is transformed inside its
+  // frame and the full-size file loads on the first zoom. While zoomed, swipe and drag-to-dismiss
+  // are off and the chrome steps aside (except Close).
+  const ZMAX = 4, ZSTEP = 2.5;
+  const Z1 = { s: 1, x: 0, y: 0 };
+  const tf = (z) => `translate(${z.x}px, ${z.y}px) scale(${z.s})`;
+  const zoomed = () => !!frame && frame._z.s > 1.01;
+
+  function setZoom(f, z) {
+    f._z = z;
+    f._photo.style.transform = z.s === 1 && !z.x && !z.y ? '' : tf(z);
+    if (f === frame) zoomMode(z.s > 1.01);
+  }
+
+  function zoomMode(on) {
+    if (lb.classList.contains('is-zoomed') === on) return;
+    lb.classList.toggle('is-zoomed', on);
+    const gl = frame._glow; // the glow can't follow a zoomed photo around, so it bows out
+    const from = getComputedStyle(gl).opacity;
+    gl._z?.cancel();
+    if (on) {
+      gl._z = gl.animate([{ opacity: from }, { opacity: 0 }], { duration: 250, easing: EASE_FADE, fill: 'forwards' });
+      loadFull(frame);
+      clearTimeout(tapTimer);
+    } else {
+      gl._z = gl.animate([{ opacity: 0 }, { opacity: getComputedStyle(gl).opacity }], { duration: 420, easing: EASE_FADE });
+    }
+  }
+
+  // The largest file we have, layered over the screen-sized one
+  function loadFull(f) {
+    const p = f._p;
+    if (f._full || f._video || !p.sizes || pick(p.sizes, 9999) === pick(p.sizes, hiWidth(f._rect))) return;
+    const im = document.createElement('img');
+    im.className = 'lb-hi';
+    im.alt = '';
+    im.decoding = 'async';
+    im.addEventListener('load', () => im.classList.add('is-loaded'), { once: true });
+    im.src = p.src(9999);
+    f._photo.append(im);
+    f._full = im;
+  }
+
+  // Allowed translate range at scale s: where the photo is bigger than the screen it must cover it,
+  // where it's smaller it must stay fully on screen
+  function bounds(f, s) {
+    const r = f._rect;
+    const ax = -r.x, bx = innerWidth - s * r.w - r.x;
+    const ay = -r.y, by = innerHeight - s * r.h - r.y;
+    return { x0: Math.min(ax, bx), x1: Math.max(ax, bx), y0: Math.min(ay, by), y1: Math.max(ay, by) };
+  }
+  // Clamp a zoom state. `give` > 0 lets it overshoot with resistance (while a finger holds it).
+  function clampZ(f, z, give = 0) {
+    let { s, x, y } = z;
+    if (!give && (s < 1 || s > ZMAX)) { // bring the scale into range around the screen centre
+      const r = f._rect, cx = innerWidth / 2 - r.x, cy = innerHeight / 2 - r.y;
+      const s2 = Math.min(ZMAX, Math.max(1, s));
+      x = cx - ((cx - x) / s) * s2;
+      y = cy - ((cy - y) / s) * s2;
+      s = s2;
+    }
+    const b = bounds(f, s);
+    const lim = (v, lo, hi) => (v < lo ? lo - (lo - v) * give : v > hi ? hi + (v - hi) * give : v);
+    return { s, x: lim(x, b.x0, b.x1), y: lim(y, b.y0, b.y1) };
+  }
+  // Zoom so the photo point under screen point (px, py) stays put
+  function zoomAround(f, s, px, py, from = f._z) {
+    const r = f._rect;
+    return { s, x: px - r.x - (s * (px - r.x - from.x)) / from.s, y: py - r.y - (s * (py - r.y - from.y)) / from.s };
+  }
+
+  function zoomTo(f, z, duration = 420) {
+    const now = getComputedStyle(f._photo).transform;
+    f._zA?.cancel();
+    setZoom(f, z);
+    if (!duration || reduce.matches) { f._photo.style.willChange = ''; return; }
+    f._zA = f._photo.animate([{ transform: now }, { transform: tf(z) }], { duration, easing: EASE_OUT });
+    f._zA.onfinish = () => { f._photo.style.willChange = ''; f._zA = null; };
+  }
+  function toggleZoom(px, py) {
+    const f = frame;
+    if (!f || f._video) return;
+    haltZoom(f);
+    zoomTo(f, zoomed() ? Z1 : clampZ(f, zoomAround(f, ZSTEP, px, py)));
+  }
+  function zoomBy(k) {
+    const f = frame;
+    if (!f || f._video) return;
+    haltZoom(f);
+    const r = f._rect;
+    const s = Math.min(ZMAX, Math.max(1, f._z.s * k));
+    zoomTo(f, s <= 1.01 ? Z1 : clampZ(f, zoomAround(f, s, r.x + r.w / 2, r.y + r.h / 2)), 300);
+  }
+  // Stop any zoom animation or fling where it is, so a new gesture starts from what's on screen
+  function haltZoom(f) {
+    if (!f || f._video) return;
+    if (f._fling) { cancelAnimationFrame(f._fling); f._fling = null; }
+    if (f._zA) {
+      const t = getComputedStyle(f._photo).transform;
+      f._zA.cancel();
+      f._zA = null;
+      if (t !== 'none') { const m = new DOMMatrixReadOnly(t); setZoom(f, { s: m.a, x: m.e, y: m.f }); }
+    }
+  }
+  // After a gesture: spring back inside the bounds, drop to 1× if it's barely zoomed
+  function settleZoom(f) {
+    const z = f._z;
+    if (z.s < 1.05) return zoomTo(f, Z1, 360);
+    const c = clampZ(f, z);
+    if (c.s !== z.s || c.x !== z.x || c.y !== z.y) zoomTo(f, c, 360);
+    else f._photo.style.willChange = '';
+  }
+  function releasePan(f, vx, vy) {
+    const c = clampZ(f, f._z);
+    if (c.x !== f._z.x || c.y !== f._z.y) return zoomTo(f, c, 360);
+    if (reduce.matches || Math.hypot(vx, vy) < 0.25) { f._photo.style.willChange = ''; return; }
+    let last = performance.now();
+    const step = (now) => {
+      const dt = Math.min(32, now - last);
+      last = now;
+      const b = bounds(f, f._z.s);
+      let x = f._z.x + vx * dt, y = f._z.y + vy * dt;
+      if (x < b.x0 || x > b.x1) { x = Math.min(b.x1, Math.max(b.x0, x)); vx = 0; }
+      if (y < b.y0 || y > b.y1) { y = Math.min(b.y1, Math.max(b.y0, y)); vy = 0; }
+      setZoom(f, { s: f._z.s, x, y });
+      const k = 0.994 ** dt;
+      vx *= k;
+      vy *= k;
+      if (Math.hypot(vx, vy) > 0.02 && f === frame) f._fling = requestAnimationFrame(step);
+      else { f._fling = null; f._photo.style.willChange = ''; }
+    };
+    f._fling = requestAnimationFrame(step);
+  }
+
+  // Trackpad pinch (arrives as ctrl + wheel) zooms; two-finger scroll pans while zoomed
+  lb.addEventListener('wheel', (e) => {
+    const f = frame;
+    if (!isOpen || closing || !f || f._video || (!e.ctrlKey && !zoomed())) return;
+    e.preventDefault();
+    haltZoom(f);
+    if (e.ctrlKey) {
+      const s = Math.min(ZMAX, Math.max(1, f._z.s * Math.exp(-e.deltaY * (e.deltaMode ? 0.05 : 0.01))));
+      setZoom(f, s <= 1.001 ? Z1 : clampZ(f, zoomAround(f, s, e.clientX, e.clientY)));
+    } else {
+      setZoom(f, clampZ(f, { ...f._z, x: f._z.x - e.deltaX, y: f._z.y - e.deltaY }));
+    }
+  }, { passive: false });
+  // iOS Safari: keep its own page pinch-zoom out of the viewer and the feed
+  document.addEventListener('gesturestart', (e) => { if (isOpen || feedOpen) e.preventDefault(); });
+
   /* ── Viewer: buttons, keys, resize ─────────────────────── */
-  closeBtn.addEventListener('click', close);
+  closeBtn.addEventListener('click', () => close());
   $('.lb-prev', lb).addEventListener('click', () => go(idx - 1, -1));
   $('.lb-next', lb).addEventListener('click', () => go(idx + 1, 1));
 
+  // Keep keyboard focus inside a dialog
+  function trapFocus(box, e) {
+    const f = [...box.querySelectorAll('button, a[href]')].filter((b) => b.offsetParent !== null && b.tabIndex > -1);
+    const first = f[0], last = f[f.length - 1];
+    if (!first) return;
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  }
+
   document.addEventListener('keydown', (e) => {
+    if (feedOpen) return feedKey(e);
     if (!isOpen) return;
-    if (e.key === 'Escape') { e.preventDefault(); close(); }
+    const photo = frame && !frame._video;
+    const pan = { ArrowRight: [-120, 0], ArrowLeft: [120, 0], ArrowDown: [0, -120], ArrowUp: [0, 120] }[e.key];
+    if (e.key === 'Escape') { e.preventDefault(); if (zoomed()) zoomTo(frame, Z1); else close(); }
+    else if (pan && zoomed()) { e.preventDefault(); haltZoom(frame); zoomTo(frame, clampZ(frame, { ...frame._z, x: frame._z.x + pan[0], y: frame._z.y + pan[1] }), 260); }
     else if (e.key === 'ArrowRight') { e.preventDefault(); go(idx + 1, 1); }
     else if (e.key === 'ArrowLeft') { e.preventDefault(); go(idx - 1, -1); }
+    else if (photo && (e.key === '+' || e.key === '=')) { e.preventDefault(); zoomBy(1.6); }
+    else if (photo && (e.key === '-' || e.key === '_')) { e.preventDefault(); zoomBy(1 / 1.6); }
+    else if (photo && e.key === '0') { e.preventDefault(); haltZoom(frame); zoomTo(frame, Z1, 300); }
     else if (frame?._video && (e.key === ' ' || e.key === 'k')) { e.preventDefault(); togglePlay(); }
     else if (frame?._video && e.key === 'm') { e.preventDefault(); toggleSound(); }
-    else if (e.key === 'Tab') {
-      // Keep focus inside the dialog
-      const f = [...lb.querySelectorAll('button')].filter((b) => b.offsetParent !== null);
-      const first = f[0], last = f[f.length - 1];
-      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
-    }
+    else if (e.key === 'Tab') trapFocus(lb, e);
   });
 
-  addEventListener('resize', () => { if (isOpen && frame) place(frame, cur[idx]); });
+  let viewW = innerWidth;
+  addEventListener('resize', () => {
+    if (!isOpen || !frame || closing) return;
+    if (innerWidth !== viewW && frame._p.kind !== 'reel') { haltZoom(frame); setZoom(frame, Z1); }
+    viewW = innerWidth;
+    place(frame, cur[idx]);
+    if (zoomed()) setZoom(frame, clampZ(frame, frame._z));
+  });
 
   /* ── Viewer: gestures ──────────────────────────────────── */
-  // Drag down to dismiss, swipe sideways to change, tap a photo to hide the chrome, tap a reel to pause
-  let g = null;
+  // One finger or the mouse: drag down to dismiss, swipe sideways to change, tap a reel to pause.
+  // Photos: a tap hides the chrome (touch) or zooms (mouse), double-tap zooms, two fingers pinch,
+  // and while zoomed a drag pans instead.
+  const pts = new Map(); // pointers down on the photo / backdrop
+  let g = null, pinch = null, lastTap = null, tapTimer;
+
   lb.addEventListener('pointerdown', (e) => {
-    if (!isOpen || closing || e.button !== 0) return;
-    const onFrame = e.target.closest('.lb-frame:not(.is-leaving)');
+    if (!isOpen || closing || !frame || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    const onFrame = !!e.target.closest('.lb-frame:not(.is-leaving)');
     const onBackdrop = e.target === stage || e.target === scrim;
     if (!onFrame && !onBackdrop) return;
-    g = { id: e.pointerId, x: e.clientX, y: e.clientY, mode: null, onFrame: !!onFrame, hist: [{ x: e.clientX, y: e.clientY, t: e.timeStamp }] };
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pts.size === 2 && !frame._video) return startPinch();
+    if (pts.size > 1) return;
+    haltZoom(frame);
+    g = { id: e.pointerId, x: e.clientX, y: e.clientY, mode: null, onFrame, z0: frame._z, hist: [{ x: e.clientX, y: e.clientY, t: e.timeStamp }] };
   });
 
   lb.addEventListener('pointermove', (e) => {
-    if (!g || e.pointerId !== g.id || !frame) return;
+    const pt = pts.get(e.pointerId);
+    if (!pt || !frame) return;
+    pt.x = e.clientX;
+    pt.y = e.clientY;
+    if (pinch) return movePinch();
+    if (!g || e.pointerId !== g.id) return;
     const dx = e.clientX - g.x, dy = e.clientY - g.y;
     g.hist.push({ x: e.clientX, y: e.clientY, t: e.timeStamp });
     if (g.hist.length > 6) g.hist.shift();
     if (!g.mode) {
       if (Math.hypot(dx, dy) < 8) return;
-      g.mode = Math.abs(dy) > Math.abs(dx) ? (dy > 0 ? 'dismiss' : null) : 'swipe';
+      g.mode = zoomed() ? 'pan' : Math.abs(dy) > Math.abs(dx) ? (dy > 0 ? 'dismiss' : null) : 'swipe';
       if (!g.mode) { g = null; return; }
-      frame._anim?.finish();
-      scrim._a?.finish();
-      frame._glow.getAnimations().forEach((a) => a.finish());
-      g.glowO = +getComputedStyle(frame._glow).opacity;
-      lb.classList.add('is-dragging');
       try { lb.setPointerCapture(e.pointerId); } catch {}
+      if (g.mode === 'pan') {
+        lb.classList.add('is-panning');
+        frame._photo.style.willChange = 'transform';
+      } else {
+        frame._anim?.finish();
+        scrim._a?.finish();
+        frame._glow.getAnimations().forEach((a) => a.finish());
+        g.glowO = +getComputedStyle(frame._glow).opacity;
+        lb.classList.add('is-dragging');
+      }
     }
-    if (g.mode === 'dismiss') {
+    if (g.mode === 'pan') {
+      setZoom(frame, clampZ(frame, { s: g.z0.s, x: g.z0.x + dx, y: g.z0.y + dy }, 0.35));
+    } else if (g.mode === 'dismiss') {
       const d = Math.max(0, dy);
       const s = 1 - Math.min(d, 500) / 1400;
       const r = frame._rect;
@@ -1017,29 +1318,34 @@
     }
   });
 
-  function endDrag(e) {
-    if (!g || e.pointerId !== g.id) return;
-    const G = g;
-    g = null;
-    lb.classList.remove('is-dragging');
-    if (!G.mode) {
-      if (e.type === 'pointerup') {
-        if (!G.onFrame) close();
-        else if (frame?._video) togglePlay();
-        else lb.classList.toggle('is-clean');
-      }
-      return;
+  function startPinch() {
+    const f = frame;
+    if (g) { // a second finger turns a swipe / dismiss into a pinch
+      if (g.mode === 'swipe' || g.mode === 'dismiss') settleFrame(g.glowO);
+      g = null;
+      lb.classList.remove('is-dragging', 'is-panning');
     }
-    const h0 = G.hist[0], h1 = G.hist[G.hist.length - 1];
-    const dt = Math.max(1, h1.t - h0.t);
-    const vx = (h1.x - h0.x) / dt, vy = (h1.y - h0.y) / dt;
-    const dx = e.clientX - G.x, dy = e.clientY - G.y;
-    if (G.mode === 'dismiss' && (dy > 110 || vy > 0.55)) return close();
-    if (G.mode === 'swipe' && (Math.abs(dx) > 70 || Math.abs(vx) > 0.45)) {
-      const dir = dx < 0 ? 1 : -1;
-      return go(idx + dir, dir);
-    }
-    // Not far enough — settle back
+    clearTimeout(tapTimer);
+    lastTap = null;
+    f._anim?.finish();
+    haltZoom(f);
+    const [a, b] = [...pts.values()];
+    pinch = { d0: Math.hypot(b.x - a.x, b.y - a.y) || 1, m0: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, z0: f._z };
+    f._photo.style.willChange = 'transform';
+    loadFull(f);
+  }
+  function movePinch() {
+    const [a, b] = [...pts.values()];
+    let s = (pinch.z0.s * Math.hypot(b.x - a.x, b.y - a.y)) / pinch.d0;
+    if (s < 1) s = 1 - (1 - s) * 0.45; // rubber band past the limits
+    if (s > ZMAX) s = ZMAX + (s - ZMAX) * 0.3;
+    const z = zoomAround(frame, s, pinch.m0.x, pinch.m0.y, pinch.z0); // anchor where the fingers started…
+    const m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    setZoom(frame, { s, x: z.x + m.x - pinch.m0.x, y: z.y + m.y - pinch.m0.y }); // …and follow them
+  }
+
+  // A swipe or dismiss that didn't go far enough glides back
+  function settleFrame(glowO) {
     const from = getComputedStyle(frame).transform;
     frame.style.transform = '';
     frame.animate([{ transform: from }, { transform: 'none' }], { duration: 380, easing: EASE_OUT });
@@ -1047,11 +1353,281 @@
     const glowNow = frame._glow.style.opacity;
     if (glowNow) {
       frame._glow.style.opacity = '';
-      frame._glow.animate([{ opacity: glowNow }, { opacity: G.glowO }], { duration: 380, easing: EASE_FADE });
+      frame._glow.animate([{ opacity: glowNow }, { opacity: glowO }], { duration: 380, easing: EASE_FADE });
     }
+  }
+
+  // Touch: wait a beat to tell a single tap (hide the chrome) from a double tap (zoom)
+  function tapPhoto(e) {
+    if (e.pointerType === 'mouse') return toggleZoom(e.clientX, e.clientY);
+    if (lastTap && e.timeStamp - lastTap.t < 300 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 30) {
+      clearTimeout(tapTimer);
+      lastTap = null;
+      return toggleZoom(e.clientX, e.clientY);
+    }
+    lastTap = { t: e.timeStamp, x: e.clientX, y: e.clientY };
+    clearTimeout(tapTimer);
+    tapTimer = setTimeout(() => { lastTap = null; if (!zoomed()) lb.classList.toggle('is-clean'); }, 300);
+  }
+
+  function endDrag(e) {
+    const had = pts.delete(e.pointerId);
+    if (pinch) {
+      if (had && pts.size < 2) { pinch = null; settleZoom(frame); } // a finger left behind doesn't pan
+      return;
+    }
+    if (!g || e.pointerId !== g.id) return;
+    const G = g;
+    g = null;
+    lb.classList.remove('is-dragging', 'is-panning');
+    if (!frame) return;
+    if (!G.mode) {
+      if (e.type !== 'pointerup') return;
+      if (!G.onFrame) return zoomed() ? zoomTo(frame, Z1) : close();
+      if (frame._video) return togglePlay();
+      return tapPhoto(e);
+    }
+    const h0 = G.hist[0], h1 = G.hist[G.hist.length - 1];
+    const dt = Math.max(1, h1.t - h0.t);
+    const vx = (h1.x - h0.x) / dt, vy = (h1.y - h0.y) / dt;
+    if (G.mode === 'pan') return releasePan(frame, e.timeStamp - h1.t > 80 ? 0 : vx, e.timeStamp - h1.t > 80 ? 0 : vy);
+    const dx = e.clientX - G.x, dy = e.clientY - G.y;
+    if (G.mode === 'dismiss' && (dy > 110 || vy > 0.55)) return close();
+    if (G.mode === 'swipe' && (Math.abs(dx) > 70 || Math.abs(vx) > 0.45)) {
+      const dir = dx < 0 ? 1 : -1;
+      return go(idx + dir, dir);
+    }
+    settleFrame(G.glowO);
   }
   lb.addEventListener('pointerup', endDrag);
   lb.addEventListener('pointercancel', endDrag);
+
+  /* ── Reel feed (phones) ────────────────────────────────── */
+  // On phones the reels open as a full-screen vertical feed: swipe up / down between them, tap to
+  // pause. One <video> travels with the active slide, so the tap that opened the feed keeps sound
+  // allowed all the way down (iOS only lets a video that was started by a tap play audio).
+  const feed = $('.feed');
+  const feedTrack = $('.feed-track', feed);
+  const feedScrim = $('.feed-scrim', feed);
+  const feedPos = $('[data-feed-pos]', feed);
+  const feedSound = $('[data-feed-sound]', feed);
+  const feedClose = $('.feed-close', feed);
+  const slides = [];
+  let feedIdx = -1, feedClosing = false, feedBusy = false, feedTile = null;
+
+  const fv = document.createElement('video');
+  fv.className = 'lb-video';
+  fv.playsInline = true;
+  fv.loop = true;
+  fv.preload = 'auto';
+  fv.addEventListener('playing', () => fv.classList.add('is-ready'));
+  const fbar = document.createElement('div');
+  fbar.className = 'lb-progress';
+  fbar.tabIndex = 0;
+  fbar.setAttribute('role', 'slider');
+  fbar.setAttribute('aria-label', 'Seek');
+  fbar.setAttribute('aria-valuemin', '0');
+  fbar.innerHTML = '<span class="lb-track-bg"></span><span class="lb-track-fill"></span><span class="lb-knob"></span><span class="lb-tip">0:00</span>';
+  $('.feed-bar', feed).append(fbar);
+  feed._video = fv;
+  feed._bar = fbar;
+  feed._sync = syncFeed;
+  wireVideo(feed);
+
+  function syncFeed() {
+    feedSound.textContent = fv.muted ? 'Sound off' : 'Sound on';
+    feedSound.classList.toggle('is-on', !fv.muted);
+    feedSound.setAttribute('aria-pressed', String(!fv.muted));
+  }
+  feedSound.addEventListener('click', () => {
+    soundOn = fv.muted;
+    fv.muted = !soundOn;
+    if (fv.paused) playFrame(feed);
+  });
+  feedClose.addEventListener('click', () => closeFeed());
+
+  function buildFeed() {
+    if (slides.length) return;
+    REELS.forEach((p) => {
+      const s = document.createElement('section');
+      s.className = 'feed-slide';
+      s.style.setProperty('--r', p.r);
+      s.style.setProperty('--c', p.c);
+      s.style.setProperty('--glow-o', glowStrength(p.c));
+      s.setAttribute('aria-label', `Reel ${label(p)}: ${p.title}`);
+      s.innerHTML = `
+        <div class="feed-media">
+          <canvas class="lb-glow" aria-hidden="true"></canvas>
+          <div class="lb-photo">
+            <img alt="" decoding="async">
+            <span class="lb-paused" aria-hidden="true"><svg viewBox="0 0 22 22"><rect x="5" y="4" width="4" height="14" rx="1" fill="currentColor"/><rect x="13" y="4" width="4" height="14" rx="1" fill="currentColor"/></svg></span>
+          </div>
+        </div>
+        <div class="feed-cap lb-chrome">
+          <p class="label feed-no"><span class="tile-no">${label(p)}</span> · ${fmtDur(p.dur)}</p>
+          <h2 class="feed-title"></h2>
+          <p class="label feed-meta"></p>
+          ${p.code ? `<a class="chip chip-btn feed-ig" href="https://www.instagram.com/reel/${p.code}/" target="_blank" rel="noopener" tabindex="-1">Instagram ↗</a>` : ''}
+        </div>`;
+      $('.feed-title', s).textContent = p.title;
+      const meta = [p.place, p.date && fmtDate(p.date)].filter(Boolean).join(' · ');
+      $('.feed-meta', s).textContent = meta;
+      $('.feed-meta', s).hidden = !meta;
+      const img = $('img', s), glow = $('.lb-glow', s);
+      img.addEventListener('load', () => { if (!glow._px) paintGlow(glow, img, p.r); }, { once: true });
+      s._img = img;
+      s._glow = glow;
+      feedTrack.append(s);
+      slides.push(s);
+    });
+  }
+  // Posters load for the slide in view and its neighbours
+  function feedPosters(i) {
+    for (let j = i - 1; j <= i + 1; j++) {
+      const s = slides[j];
+      if (s && !s._img.src) { s._img.srcset = REELS[j].srcset; s._img.sizes = '100vw'; s._img.src = REELS[j].src(800); }
+    }
+  }
+
+  function activate(i) {
+    if (i === feedIdx || !slides[i]) return;
+    const prev = slides[feedIdx];
+    if (prev) {
+      prev.classList.remove('is-active');
+      prev.querySelectorAll('a').forEach((a) => { a.tabIndex = -1; });
+      feed.classList.add('has-swiped');
+    }
+    feedIdx = i;
+    const s = slides[i], p = REELS[i];
+    s.classList.add('is-active');
+    s.querySelectorAll('a').forEach((a) => { a.tabIndex = 0; });
+    feedPosters(i);
+
+    // Hand the video over to this slide
+    fv.classList.remove('is-ready');
+    fbar.style.setProperty('--p', 0);
+    fbar.setAttribute('aria-valuemax', String(Math.round(p.dur)));
+    feed.classList.remove('is-paused');
+    $('.lb-paused', s).before(fv);
+    fv.setAttribute('aria-label', p.title);
+    fv.src = p.video;
+    feed._glow = s._glow;
+    feed._r = p.r;
+    feed._quiet = false;
+    playFrame(feed);
+    syncFeed();
+    feedPos.textContent = `${pad(i + 1, 2)} / ${pad(REELS.length, 2)}`;
+    if (feedOpen) showURL(p, false);
+  }
+
+  feedTrack.addEventListener('scroll', () => {
+    if (!feedOpen || feedBusy || feedClosing) return;
+    const i = Math.round(feedTrack.scrollTop / feedTrack.clientHeight);
+    if (i !== feedIdx) activate(i);
+  }, { passive: true });
+  // Tap to pause / play (a scroll never fires a click)
+  feedTrack.addEventListener('click', (e) => {
+    if (!feedOpen || feedClosing || e.target.closest('a, button')) return;
+    if (fv.paused) playFrame(feed); else fv.pause();
+  });
+  new ResizeObserver(() => { // rotation: stay on the same reel
+    if (!feedOpen) return;
+    feedBusy = true;
+    feedTrack.scrollTop = feedIdx * feedTrack.clientHeight;
+    requestAnimationFrame(() => { feedBusy = false; });
+  }).observe(feedTrack);
+
+  function feedStep(d) {
+    const i = Math.min(REELS.length - 1, Math.max(0, feedIdx + d));
+    feedTrack.scrollTo({ top: i * feedTrack.clientHeight, behavior: reduce.matches ? 'auto' : 'smooth' });
+  }
+  function feedKey(e) {
+    if (e.key === 'Escape') { e.preventDefault(); closeFeed(); }
+    else if (e.key === 'ArrowDown' || e.key === 'PageDown') { e.preventDefault(); feedStep(1); }
+    else if (e.key === 'ArrowUp' || e.key === 'PageUp') { e.preventDefault(); feedStep(-1); }
+    else if (e.key === ' ' && !e.target.closest('button, a, [role="slider"]')) { e.preventDefault(); if (fv.paused) playFrame(feed); else fv.pause(); }
+    else if (e.key === 'm') { e.preventDefault(); feedSound.click(); }
+    else if (e.key === 'Tab') trapFocus(feed, e);
+  }
+
+  function openFeed(i, { instant = false } = {}) {
+    if (feedOpen || isOpen || !REELS[i]) return;
+    buildFeed();
+    const p = REELS[i];
+    REELS.forEach(stopPreview);
+    feedOpen = true;
+    showURL(p, true);
+    root.classList.add('is-locked');
+    page.inert = true;
+    feed.classList.remove('has-swiped');
+    feed.classList.add('is-open');
+    feed.setAttribute('aria-hidden', 'false');
+    feedIdx = -1;
+    feedBusy = true;
+    feedTrack.scrollTop = i * feedTrack.clientHeight;
+    requestAnimationFrame(() => { feedBusy = false; });
+    activate(i); // still inside the tap, so sound is allowed
+
+    const s = slides[i], media = $('.feed-media', s);
+    feedTile = p.el;
+    feedTile.style.visibility = 'hidden';
+    if (instant || reduce.matches) {
+      feed.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 220, easing: EASE_FADE });
+    } else {
+      media.animate([{ transform: flip(rectOf(p.el), rectOf(media)) }, { transform: 'none' }], { duration: 520, easing: EASE_OUT });
+      feedScrim.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 400, easing: EASE_FADE });
+      glowIn({ _glow: s._glow }, 1000, 240);
+    }
+    requestAnimationFrame(() => feed.classList.add('show-chrome'));
+    feedClose.focus({ preventScroll: true });
+  }
+
+  function closeFeed(fromHistory = false) {
+    if (!feedOpen || feedClosing) return;
+    feedClosing = true;
+    const p = REELS[feedIdx], s = slides[feedIdx], media = $('.feed-media', s);
+    if (!fromHistory) leaveURL();
+    feed._quiet = true;
+    fv.pause();
+    clearInterval(feed._glowTimer);
+    feed._glowTimer = null;
+
+    // Land on the current reel's tile — scroll it into view first (hidden under the feed)
+    feedTile.style.visibility = '';
+    const t = p.el;
+    t.style.visibility = 'hidden';
+    let r = rectOf(t);
+    if (r.y < 12 || r.y + r.h > innerHeight - 12) {
+      scrollTo({ top: scrollY + r.y - (innerHeight - r.h) / 2, behavior: 'instant' });
+      r = rectOf(t);
+    }
+    feed.classList.remove('show-chrome');
+
+    const done = () => {
+      feed.getAnimations({ subtree: true }).forEach((a) => a.cancel());
+      feed.classList.remove('is-open', 'is-paused');
+      feed.setAttribute('aria-hidden', 'true');
+      slides[feedIdx].classList.remove('is-active');
+      fv.removeAttribute('src');
+      fv.load();
+      fv.remove();
+      feedIdx = -1;
+      t.style.visibility = '';
+      root.classList.remove('is-locked');
+      page.inert = false;
+      feedOpen = false;
+      feedClosing = false;
+      t.focus({ preventScroll: true });
+    };
+    if (reduce.matches) {
+      feed.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, easing: EASE_FADE, fill: 'forwards' }).onfinish = done;
+      return;
+    }
+    glowOut({ _glow: s._glow }, 240);
+    feedScrim.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 420, delay: 60, easing: EASE_FADE, fill: 'forwards' });
+    media.animate([{ transform: 'none' }, { transform: flip(r, rectOf(media)) }], { duration: 480, easing: EASE_OUT, fill: 'forwards' })
+      .onfinish = () => { s._glow.style.opacity = ''; done(); };
+  }
 
   /* ── Page navigation ───────────────────────────────────── */
   // Our own eased scroll instead of CSS `scroll-behavior`, so long jumps (top → Contact) don't
@@ -1102,14 +1678,18 @@
     $('.brand').focus({ preventScroll: true });
   });
 
-  // Deep links: ?p=014 opens a photo, ?m=03 a reel
+  // Deep links: ?p=014 opens a photo, ?m=03 a reel (in the feed on phones). The link's own history
+  // entry becomes the plain page, so Back closes the viewer and stays on the site.
   const params = new URLSearchParams(location.search);
   const qp = +params.get('p'), qm = +params.get('m');
-  if (qp) {
-    const i = list.findIndex((p) => p.no === qp);
-    if (i > -1) requestAnimationFrame(() => open(i, { instant: true }));
-  } else if (qm) {
-    const i = REELS.findIndex((p) => p.no === qm);
-    if (i > -1) requestAnimationFrame(() => open(i, { instant: true, set: 'reels' }));
+  const ip = qp ? list.findIndex((p) => p.no === qp) : -1;
+  const im = qm ? REELS.findIndex((p) => p.no === qm) : -1;
+  if (ip > -1 || im > -1) {
+    try { history.replaceState(null, '', location.pathname); } catch {}
+    requestAnimationFrame(() => {
+      if (ip > -1) open(ip, { instant: true });
+      else if (phone.matches) openFeed(im, { instant: true });
+      else open(im, { instant: true, set: 'reels' });
+    });
   }
 })();
