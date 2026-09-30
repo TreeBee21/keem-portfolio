@@ -704,9 +704,67 @@
       b.classList.toggle('is-active', on);
       if (on) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current');
     });
-    const a = track.children[idx];
-    if (a) stripEl.scrollTo({ left: a.offsetLeft - (stripEl.clientWidth - a.offsetWidth) / 2, behavior: reduce.matches ? 'auto' : 'smooth' });
+    // Mid-resize the thumbnails are still changing width, so follow the active one frame by frame
+    if (stripHold) stripHold.target = centreActive;
+    else if (track.children[idx]) stripEl.scrollTo({ left: centreActive(), behavior: reduce.matches ? 'auto' : 'smooth' });
   }
+  const centreActive = () => {
+    const a = track.children[idx];
+    return a ? a.offsetLeft - (stripEl.clientWidth - a.offsetWidth) / 2 : stripEl.scrollLeft;
+  };
+
+  /* ── Viewer: thumbnail strip grows while it's used (phones) ── */
+  // Touching or swiping the strip enlarges the thumbnails so they're easy to see and hit; it
+  // shrinks back a moment after the last touch / scroll. While the size animates, the thumbnail
+  // under the finger (or the active one, after a tap) is held in place.
+  const compact = matchMedia('(max-width: 760px), (hover: none)');
+  let stripHold = null, stripTimer;
+
+  function holdStrip(target, ms = 380) {
+    if (stripHold) cancelAnimationFrame(stripHold.raf);
+    const t0 = performance.now();
+    const hold = stripHold = { target };
+    const tick = (now) => {
+      if (stripHold !== hold) return;
+      stripEl.scrollLeft = hold.target();
+      if (now - t0 < ms) hold.raf = requestAnimationFrame(tick);
+      else stripHold = null;
+    };
+    hold.raf = requestAnimationFrame(tick);
+  }
+  function releaseStrip() {
+    if (stripHold) cancelAnimationFrame(stripHold.raf);
+    stripHold = null;
+  }
+  function sizeStrip(open, anchorX = stripEl.clientWidth / 2) {
+    if (open === stripEl.classList.contains('is-expanded')) return;
+    const k = (stripEl.scrollLeft + anchorX) / stripEl.scrollWidth; // point that stays put
+    stripEl.classList.toggle('is-expanded', open);
+    if (reduce.matches) return;
+    holdStrip(() => k * stripEl.scrollWidth - anchorX);
+  }
+  function shrinkStripSoon() {
+    clearTimeout(stripTimer);
+    stripTimer = setTimeout(() => sizeStrip(false), 1600);
+  }
+  function resetStrip() {
+    clearTimeout(stripTimer);
+    releaseStrip();
+    stripEl.classList.remove('is-expanded');
+  }
+
+  stripEl.addEventListener('pointerdown', (e) => {
+    if (!compact.matches) return;
+    clearTimeout(stripTimer);
+    sizeStrip(true, e.clientX - stripEl.getBoundingClientRect().left);
+  });
+  stripEl.addEventListener('touchmove', releaseStrip, { passive: true }); // the finger takes over scrolling
+  ['pointerup', 'pointercancel'].forEach((ev) => stripEl.addEventListener(ev, () => {
+    if (stripEl.classList.contains('is-expanded')) shrinkStripSoon();
+  }));
+  stripEl.addEventListener('scroll', () => {
+    if (stripEl.classList.contains('is-expanded') && !stripHold) shrinkStripSoon(); // momentum keeps it open
+  }, { passive: true });
 
   function preload(i) {
     [1, -1].forEach((d) => {
@@ -735,6 +793,7 @@
     page.inert = true;
     lb.classList.add('is-open');
     lb.setAttribute('aria-hidden', 'false');
+    resetStrip();
     buildStrip();
     setInfo(p, false);
 
@@ -822,6 +881,7 @@
     }
 
     lb.classList.remove('show-chrome');
+    resetStrip();
     lb.querySelectorAll('.lb-frame.is-leaving').forEach((x) => x.remove());
 
     const f = frame;

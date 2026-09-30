@@ -665,19 +665,28 @@ a.contact-row:hover .contact-arrow { color: var(--accent); translate: 3px -3px; 
 .chip-sim { color: var(--text); border-color: rgba(226, 59, 36, 0.45); }
 .chip-sim::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
 
+/* Thumbnail strip. --th (thumb height) is a registered property so it can animate: on phones
+   the strip grows while it's being used (see "thumbnail strip" in app.js). It grows upward over
+   the caption — the matching negative margin keeps its grid row the same height, so the photo
+   above never moves. */
+@property --th { syntax: "<length>"; inherits: true; initial-value: 46px; }
 .lb-strip {
+  --th: 46px;
   overflow-x: auto;
   scrollbar-width: none;
   padding: 14px var(--gutter) calc(16px + env(safe-area-inset-bottom));
+  background-color: rgba(13, 12, 11, 0);
+  box-shadow: 0 -20px 20px -4px rgba(13, 12, 11, 0);
+  transition: --th 0.34s var(--ease-out), margin-top 0.34s var(--ease-out),
+    background-color 0.25s var(--ease-fade), box-shadow 0.25s var(--ease-fade);
 }
 .lb-strip::-webkit-scrollbar { display: none; }
 .lb-track { display: flex; gap: 4px; width: max-content; margin-inline: auto; }
 .thumb {
-  --h: 46px;
   position: relative;
   flex: none;
-  width: calc(var(--h) * var(--r));
-  height: var(--h);
+  width: calc(var(--th) * var(--r));
+  height: var(--th);
   border-radius: 1px;
   background: var(--c);
   opacity: 0.34;
@@ -719,8 +728,21 @@ a.contact-row:hover .contact-arrow { color: var(--accent); translate: 3px -3px; 
   .lb-stage { margin: 0; }
   .lb-info { flex-direction: column; align-items: stretch; padding: 14px 16px 4px; }
   .lb-exif { max-width: none; }
-  .lb-strip { padding-inline: 16px; }
-  .thumb { --h: 38px; }
+  .lb-strip { --th: 38px; padding-inline: 16px; }
+  .lb-strip.is-expanded {
+    --th: 84px;
+    margin-top: -46px; /* = 84 − 38: grow upward without resizing the row */
+    background-color: rgba(13, 12, 11, 0.94);
+    box-shadow: 0 -20px 20px -4px rgba(13, 12, 11, 0.94);
+  }
+  .lb-strip.is-expanded .thumb { opacity: 0.72; } /* easier to browse while choosing */
+  .lb-strip.is-expanded .thumb.is-active { opacity: 1; }
+  /* The enlarged strip covers the caption, so step it aside instead of half-hiding it */
+  .lb.show-chrome:has(.lb-strip.is-expanded) .lb-info {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s var(--ease-fade), translate 0.2s var(--ease-fade);
+  }
 }
 @media (max-width: 760px), (hover: none) {
   .lb-nav { display: none; }
