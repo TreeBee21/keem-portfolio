@@ -774,6 +774,7 @@ a.contact-row:hover .contact-arrow { color: var(--accent); translate: 3px -3px; 
   scroll-snap-stop: always;
   -webkit-tap-highlight-color: transparent;
 }
+.feed-slide.is-peek { align-items: start; }
 .feed-media {
   position: relative;
   width: min(100vw, calc(100vh * var(--r)));
@@ -798,9 +799,7 @@ a.contact-row:hover .contact-arrow { color: var(--accent); translate: 3px -3px; 
   pointer-events: none;
 }
 .feed-top > * { pointer-events: auto; }
-.feed-pos { display: grid; gap: 7px; margin: 0; color: var(--text); white-space: nowrap; }
-.feed-hint { padding-left: 15px; color: var(--text-2); transition: opacity 0.3s var(--ease-fade); }
-.feed.has-swiped .feed-hint { opacity: 0; }
+.feed-pos { margin: 0; color: var(--text); white-space: nowrap; }
 .feed-btns { display: flex; align-items: center; gap: 8px; }
 .feed-btns .chip { height: 40px; background: rgba(13, 12, 11, 0.4); }
 .feed-close {
@@ -834,6 +833,36 @@ a.contact-row:hover .contact-arrow { color: var(--accent); translate: 3px -3px; 
 }
 .feed-meta { margin: 8px 0 0; color: var(--text-2); }
 .feed-ig { margin-top: 14px; background: rgba(13, 12, 11, 0.4); }
+/* "Swipe up for more": shown with the peek nudge until the first swipe (see app.js) */
+.feed-cue {
+  position: absolute;
+  left: 50%;
+  top: 62%;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 11px 16px 11px 12px;
+  border: 1px solid rgba(236, 230, 220, 0.16);
+  border-radius: 999px;
+  background: rgba(13, 12, 11, 0.62);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  color: var(--text);
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  translate: -50% 8px;
+  transition: opacity 0.3s var(--ease-fade), translate 0.45s var(--ease-out);
+}
+.feed-cue svg { width: 16px; height: 16px; animation: cue-rise 1.3s var(--ease-out) infinite; }
+.feed.show-cue .feed-cue { opacity: 1; translate: -50% 0; }
+@keyframes cue-rise {
+  0% { translate: 0 5px; opacity: 0; }
+  35% { opacity: 1; }
+  75%, 100% { translate: 0 -5px; opacity: 0; }
+}
 .feed-bar {
   position: absolute;
   left: 0;
@@ -896,6 +925,7 @@ a.contact-row:hover .contact-arrow { color: var(--accent); translate: 3px -3px; 
 }
 @media (prefers-reduced-motion: reduce) {
   .reveal { animation: none; }
+  .feed-cue svg { animation: none; }
   .tile img, .tile img.is-loaded { filter: none; transition: opacity 0.3s var(--ease-fade); }
   .sheet.is-reflowing .tile, .sheet.is-reflowing { transition: none; }
 }

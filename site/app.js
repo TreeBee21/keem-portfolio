@@ -1495,7 +1495,7 @@
     if (prev) {
       prev.classList.remove('is-active');
       prev.querySelectorAll('a').forEach((a) => { a.tabIndex = -1; });
-      feed.classList.add('has-swiped');
+      swiped();
     }
     feedIdx = i;
     const s = slides[i], p = REELS[i];
@@ -1519,6 +1519,55 @@
     feedPos.textContent = `${pad(i + 1, 2)} / ${pad(REELS.length, 2)}`;
     if (feedOpen) showURL(p, false);
   }
+
+  /* ── Reel feed: "there's more below" cue ──────────────── */
+  // The pattern Reels, Shorts and TikTok use: shortly after the feed opens, the reel nudges up to
+  // show a sliver of the next one and springs back, with a "Swipe up for more" pill (X's wording).
+  // Twice at most, gone at the first swipe, and never again on this device once someone has swiped.
+  const CUE_KEY = 'keem-feed-swiped';
+  let cueTimers = [], cueAnims = [];
+  const hasSwiped = () => { try { return localStorage.getItem(CUE_KEY) === '1'; } catch { return false; } };
+
+  function startCue() {
+    stopCue();
+    if (hasSwiped()) return;
+    cueTimers = [setTimeout(cue, 1400), setTimeout(cue, 7500)];
+  }
+  function cue() {
+    if (!feedOpen || feedClosing || feed.classList.contains('has-swiped') || feedIdx >= REELS.length - 1) return;
+    feed.classList.add('show-cue');
+    cueTimers.push(setTimeout(() => feed.classList.remove('show-cue'), 4200));
+    if (reduce.matches) return;
+    const d = Math.min(170, feedTrack.clientHeight * 0.2);
+    const kf = [
+      { translate: '0 0', easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' },
+      { translate: `0 ${-d}px`, offset: 0.42, easing: 'cubic-bezier(0.34, 1.3, 0.64, 1)' }, // settle with a small bounce
+      { translate: '0 0' },
+    ];
+    // Reels are centred in their slide, so the next one sits at the top while it peeks in —
+    // otherwise a landscape reel would only show empty space. It's off screen again when this ends.
+    const next = slides[feedIdx + 1];
+    next.classList.add('is-peek');
+    cueAnims = [slides[feedIdx], next].map((s) => s.animate(kf, { duration: 1150 }));
+    cueAnims[1].onfinish = () => next.classList.remove('is-peek');
+  }
+  const stopPeek = () => {
+    cueAnims.forEach((a) => a.cancel());
+    cueAnims = [];
+    slides.forEach((s) => s.classList.remove('is-peek'));
+  };
+  function stopCue() {
+    cueTimers.forEach(clearTimeout);
+    cueTimers = [];
+    stopPeek();
+    feed.classList.remove('show-cue');
+  }
+  function swiped() {
+    feed.classList.add('has-swiped');
+    stopCue();
+    try { localStorage.setItem(CUE_KEY, '1'); } catch {}
+  }
+  feedTrack.addEventListener('touchstart', stopPeek, { passive: true }); // a finger always wins over the nudge
 
   feedTrack.addEventListener('scroll', () => {
     if (!feedOpen || feedBusy || feedClosing) return;
@@ -1580,11 +1629,13 @@
     }
     requestAnimationFrame(() => feed.classList.add('show-chrome'));
     feedClose.focus({ preventScroll: true });
+    startCue();
   }
 
   function closeFeed(fromHistory = false) {
     if (!feedOpen || feedClosing) return;
     feedClosing = true;
+    stopCue();
     const p = REELS[feedIdx], s = slides[feedIdx], media = $('.feed-media', s);
     if (!fromHistory) leaveURL();
     feed._quiet = true;
